@@ -1,0 +1,47 @@
+name: Oracle A1 auto-create
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  try:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      TENANCY: ${{ secrets.OCI_TENANCY }}
+    steps:
+      - name: OCI CLI setup
+        run: |
+          pip install oci-cli --quiet
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_KEY }}" > ~/.oci/key.pem
+          cat > ~/.oci/config <<CONF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=~/.oci/key.pem
+          CONF
+          chmod 600 ~/.oci/key.pem ~/.oci/config
+          echo "${{ secrets.SSH_PUBKEY }}" > ~/key.pub
+
+      - name: Server banane ki koshish
+        run: |
+          EXIST=$(oci compute instance list -c "$TENANCY" --display-name vpn-server --all \
+            --query "length(data[?\"lifecycle-state\"!='TERMINATED'])" --raw-output 2>/dev/null || echo 0)
+          if [ -n "$EXIST" ] && [ "$EXIST" != "0" ]; then echo "Server pehle se bana hua hai. Workflow band kar dein."; exit 0; fi
+          for i in 1 2 3 4; do
+            OUT=$(oci compute instance launch -c "$TENANCY" \
+              --availability-domain "${{ secrets.AD }}" --shape VM.Standard.A1.Flex \
+              --shape-config '{"ocpus":2,"memoryInGBs":12}' \
+              --image-id "${{ secrets.IMAGE_ID }}" --subnet-id "${{ secrets.SUBNET_ID }}" \
+              --assign-public-ip true --display-name vpn-server --boot-volume-size-in-gbs 200 \
+              --ssh-authorized-keys-file ~/key.pub 2>&1)
+            if echo "$OUT" | grep -q '"lifecycle-state"'; then echo "SERVER BAN GAYA!"; exit 0; fi
+            if echo "$OUT" | grep -qiE 'capacity|TooManyRequests'; then echo "Koshish $i: jagah nahi"; sleep 60; continue; fi
+            echo "$OUT"; exit 1
+          done
