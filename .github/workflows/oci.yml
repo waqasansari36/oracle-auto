@@ -5,10 +5,14 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
+concurrency:
+  group: oci-create
+  cancel-in-progress: false
+
 jobs:
   try:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 12
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
       TENANCY: ${{ secrets.OCI_TENANCY }}
@@ -35,8 +39,8 @@ jobs:
           EXIST=$(oci compute instance list -c "$TENANCY" --display-name vpn-server --all \
             --query "length(data[?\"lifecycle-state\"!='TERMINATED'])" --raw-output 2>/dev/null || echo 0)
           if [ -n "$EXIST" ] && [ "$EXIST" != "0" ]; then echo "Server pehle se bana hua hai. Workflow band kar dein."; exit 0; fi
-          for i in 1 2 3 4; do
-            OUT=$(oci compute instance launch -c "$TENANCY" \
+          for i in 1 2 3; do
+            OUT=$(oci --no-retry compute instance launch -c "$TENANCY" \
               --availability-domain "${{ secrets.AD }}" --shape VM.Standard.A1.Flex \
               --shape-config '{"ocpus":2,"memoryInGBs":12}' \
               --image-id "${{ secrets.IMAGE_ID }}" --subnet-id "${{ secrets.SUBNET_ID }}" \
